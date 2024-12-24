@@ -1,6 +1,7 @@
 [package]
 name = "redis-rust"
 version = "0.1.0"
+edition = "2021"
 
 [dependencies]
 anyhow = "1.0.59"                                   # error handling
