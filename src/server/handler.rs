@@ -22,7 +22,9 @@ pub enum RESPValue {
     SimpleString(Bytes),
     BulkString(Bytes),
     Array(Vec<RESPValue>),
+    Null,
     NullBulkString,
+    SimpleError(Bytes),
 }
 
 impl RedisConnectionHandler {

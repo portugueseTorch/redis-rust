@@ -1,9 +1,13 @@
 #![allow(unused_imports)]
 use core::str;
-use std::net::{IpAddr, Ipv4Addr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, Ipv4Addr},
+};
 
+use bytes::Bytes;
 use server::{
-    commands::{echo, ping},
+    commands::{echo, get, ping, set},
     handler::RedisConnectionHandler,
 };
 use tokio::{
@@ -36,6 +40,7 @@ async fn main() {
 
 async fn handle_connection(stream: TcpStream) {
     let mut handler = RedisConnectionHandler::new(stream);
+    let mut store: HashMap<Bytes, Bytes> = HashMap::new();
 
     loop {
         let parsed_data = handler.parse_request().await.unwrap();
@@ -48,6 +53,8 @@ async fn handle_connection(stream: TcpStream) {
                 match cmd_as_str.as_str() {
                     "ping" => ping(),
                     "echo" => echo(&args),
+                    "set" => set(&args, &mut store),
+                    "get" => get(&args, &store),
                     _ => panic!("Invalid command found: {}", 4),
                 }
             }

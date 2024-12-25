@@ -1,4 +1,5 @@
 use core::str;
+use std::collections::HashMap;
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -32,4 +33,38 @@ pub fn ping() -> RESPValue {
 
 pub fn echo(args: &Vec<RESPValue>) -> RESPValue {
     args.first().unwrap().clone()
+}
+
+pub fn set(args: &Vec<RESPValue>, store: &mut HashMap<Bytes, Bytes>) -> RESPValue {
+    let key = args
+        .get(0)
+        .expect("No key specified for SET command")
+        .clone()
+        .unpack_bulk_str()
+        .unwrap();
+    let value = args
+        .get(1)
+        .expect("No value specified for SET command")
+        .clone()
+        .unpack_bulk_str()
+        .unwrap();
+
+    store.insert(key, value);
+
+    RESPValue::SimpleString(Bytes::from_static(b"OK"))
+}
+
+pub fn get(args: &Vec<RESPValue>, store: &HashMap<Bytes, Bytes>) -> RESPValue {
+    let key = args
+        .get(0)
+        .expect("No key specified for SET command")
+        .clone()
+        .unpack_bulk_str()
+        .unwrap();
+    let value = store.get(&key);
+
+    match value {
+        Some(val) => RESPValue::BulkString(val.clone()),
+        None => RESPValue::Null,
+    }
 }
