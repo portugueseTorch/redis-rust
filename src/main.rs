@@ -3,6 +3,7 @@ use core::str;
 use std::{
     collections::HashMap,
     net::{IpAddr, Ipv4Addr},
+    time::SystemTime,
 };
 
 use bytes::Bytes;
@@ -40,7 +41,7 @@ async fn main() {
 
 async fn handle_connection(stream: TcpStream) {
     let mut handler = RedisConnectionHandler::new(stream);
-    let mut store: HashMap<Bytes, Bytes> = HashMap::new();
+    let mut store: HashMap<Bytes, (Bytes, Option<SystemTime>)> = HashMap::new();
 
     loop {
         let parsed_data = handler.parse_request().await.unwrap();

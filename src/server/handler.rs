@@ -24,7 +24,21 @@ pub enum RESPValue {
     Array(Vec<RESPValue>),
     Null,
     NullBulkString,
-    SimpleError(Bytes),
+}
+
+impl RESPValue {
+    fn from_token(tok: RESPRaw, buf: &Bytes) -> RESPValue {
+        match tok {
+            RESPRaw::SimpleString(str) => RESPValue::SimpleString(str.as_bytes(&buf)),
+            RESPRaw::BulkString(bulk_str) => RESPValue::BulkString(bulk_str.as_bytes(&buf)),
+            RESPRaw::NullBulkString(_) => RESPValue::NullBulkString,
+            RESPRaw::Array(arr) => RESPValue::Array(
+                arr.into_iter()
+                    .map(|m| RESPValue::from_token(m, buf))
+                    .collect(),
+            ),
+        }
+    }
 }
 
 impl RedisConnectionHandler {
@@ -40,10 +54,6 @@ impl RedisConnectionHandler {
         }
     }
 
-    /// Reads the data from self.stream in self.buffer, zero-copy-parsing the data
-    /// and returning a Result<Option<RESPValue>, RESPError>
-    /// If reading or parsing fails, an error is returned
-    /// If 0 bytes are read from the stream, Ok(None) is returned
     pub async fn parse_request(&mut self) -> RESPResult {
         let bytes_read = self.stream.read_buf(&mut self.buffer).await?;
         if bytes_read == 0 {
@@ -78,20 +88,5 @@ impl RedisConnectionHandler {
 
         self.stream.write(serialized_data.as_bytes()).await.unwrap();
         Ok(())
-    }
-}
-
-impl RESPValue {
-    fn from_token(tok: RESPRaw, buf: &Bytes) -> RESPValue {
-        match tok {
-            RESPRaw::SimpleString(str) => RESPValue::SimpleString(str.as_bytes(&buf)),
-            RESPRaw::BulkString(bulk_str) => RESPValue::BulkString(bulk_str.as_bytes(&buf)),
-            RESPRaw::NullBulkString(_) => RESPValue::NullBulkString,
-            RESPRaw::Array(arr) => RESPValue::Array(
-                arr.into_iter()
-                    .map(|m| RESPValue::from_token(m, buf))
-                    .collect(),
-            ),
-        }
     }
 }

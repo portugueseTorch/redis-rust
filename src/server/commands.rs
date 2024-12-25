@@ -1,5 +1,8 @@
 use core::str;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -35,36 +38,61 @@ pub fn echo(args: &Vec<RESPValue>) -> RESPValue {
     args.first().unwrap().clone()
 }
 
-pub fn set(args: &Vec<RESPValue>, store: &mut HashMap<Bytes, Bytes>) -> RESPValue {
-    let key = args
-        .get(0)
-        .expect("No key specified for SET command")
-        .clone()
-        .unpack_bulk_str()
-        .unwrap();
-    let value = args
-        .get(1)
-        .expect("No value specified for SET command")
-        .clone()
-        .unpack_bulk_str()
-        .unwrap();
+pub fn set(
+    args: &Vec<RESPValue>,
+    store: &mut HashMap<Bytes, (Bytes, Option<SystemTime>)>,
+) -> RESPValue {
+    let key = get_argument(0, args).unwrap();
+    let value = get_argument(1, args).unwrap();
+    let cmd_arg = args.get(2);
 
-    store.insert(key, value);
+    let timeout_stamp = cmd_arg.map(|cmd| {
+        let cmd_as_str = str::from_utf8(&cmd.clone().unpack_bulk_str().unwrap())
+            .unwrap()
+            .to_lowercase();
 
+        match cmd_as_str.as_str() {
+            "px" => {
+                let timeout_value_raw =
+                    get_argument(3, args).expect("PX cmd arg should provide a timeout stamp");
+                let timeout_value: u64 =
+                    str::from_utf8(&timeout_value_raw).unwrap().parse().unwrap();
+
+                SystemTime::now() + Duration::from_millis(timeout_value)
+            }
+            _ => panic!("Invalid command argument for SET: '{}'", cmd_as_str),
+        }
+    });
+
+    store.insert(key, (value, timeout_stamp));
     RESPValue::SimpleString(Bytes::from_static(b"OK"))
 }
 
-pub fn get(args: &Vec<RESPValue>, store: &HashMap<Bytes, Bytes>) -> RESPValue {
-    let key = args
-        .get(0)
-        .expect("No key specified for SET command")
-        .clone()
-        .unpack_bulk_str()
-        .unwrap();
+pub fn get(
+    args: &Vec<RESPValue>,
+    store: &HashMap<Bytes, (Bytes, Option<SystemTime>)>,
+) -> RESPValue {
+    let key = get_argument(0, args).unwrap();
     let value = store.get(&key);
 
     match value {
-        Some(val) => RESPValue::BulkString(val.clone()),
-        None => RESPValue::Null,
+        Some((val, expiry)) => match expiry {
+            Some(e) => {
+                if *e < SystemTime::now() {
+                    RESPValue::NullBulkString
+                } else {
+                    RESPValue::BulkString(val.clone())
+                }
+            }
+            None => RESPValue::BulkString(val.clone()),
+        },
+        None => RESPValue::NullBulkString,
     }
+}
+
+fn get_argument(pos: usize, args: &Vec<RESPValue>) -> Result<Bytes> {
+    args.get(pos)
+        .expect("No key specified for SET command")
+        .clone()
+        .unpack_bulk_str()
 }

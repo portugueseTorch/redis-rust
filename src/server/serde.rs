@@ -131,8 +131,8 @@ impl RESPValue {
         match self {
             RESPValue::SimpleString(s) => Ok(format!("+{}\r\n", str::from_utf8(&s)?)),
             RESPValue::BulkString(b) => Ok(format!("${}\r\n{}\r\n", b.len(), str::from_utf8(&b)?)),
-            RESPValue::Null => Ok(String::from("$-1\r\n")),
-            RESPValue::SimpleError(e) => Ok(format!("-{}\r\n", str::from_utf8(&e)?)),
+            RESPValue::Null => Ok(String::from("_\r\n")),
+            RESPValue::NullBulkString => Ok(String::from("$-1\r\n")),
             _ => bail!("Invalid serialize type"),
         }
     }
