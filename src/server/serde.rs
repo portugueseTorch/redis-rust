@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use anyhow::{bail, Result};
 use bytes::{Bytes, BytesMut};
 
-use super::handler::RESPValue;
+use super::handler::RedisValue;
 
 /// TOk represents the start index and last index (exclusive)
 /// of the current token in a buffer
@@ -126,14 +126,14 @@ pub fn get_next_word(buf: &BytesMut, pos: usize) -> Option<(Tok, usize)> {
     next_crlf.map(|cr| (Tok::new(pos, pos + cr), pos + cr + 2))
 }
 
-impl RESPValue {
+impl RedisValue {
     pub fn serialize(self) -> Result<String> {
         match self {
-            RESPValue::SimpleString(s) => Ok(format!("+{}\r\n", str::from_utf8(&s)?)),
-            RESPValue::BulkString(b) => Ok(format!("${}\r\n{}\r\n", b.len(), str::from_utf8(&b)?)),
-            RESPValue::NullBulkString => Ok(String::from("$-1\r\n")),
-            RESPValue::SimpleError(e) => Ok(format!("-{}\r\n", str::from_utf8(&e)?)),
-            RESPValue::Array(arr) => Ok(format!(
+            RedisValue::SimpleString(s) => Ok(format!("+{}\r\n", str::from_utf8(&s)?)),
+            RedisValue::BulkString(b) => Ok(format!("${}\r\n{}\r\n", b.len(), str::from_utf8(&b)?)),
+            RedisValue::NullBulkString => Ok(String::from("$-1\r\n")),
+            RedisValue::SimpleError(e) => Ok(format!("-{}\r\n", str::from_utf8(&e)?)),
+            RedisValue::Array(arr) => Ok(format!(
                 "*{}\r\n{}",
                 arr.len(),
                 arr.into_iter()

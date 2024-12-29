@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use core::str;
 use std::{
+    borrow::BorrowMut,
     collections::HashMap,
     env,
     net::{IpAddr, Ipv4Addr},
@@ -11,7 +12,8 @@ use std::{
 use bytes::Bytes;
 use server::{
     commands::{config, echo, get, ping, set},
-    handler::{RESPValue, RedisConnectionHandler},
+    handler::{RedisConnectionHandler, RedisValue},
+    server::RedisServer,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,32 +23,6 @@ use tokio::{
 
 mod server;
 
-pub type RedisStore = Arc<Mutex<HashMap<Bytes, (Bytes, Option<SystemTime>)>>>;
-
-pub struct RedisDatabaseConfig(pub HashMap<String, String>);
-impl RedisDatabaseConfig {
-    pub fn from_env_args(args: Vec<String>) -> Option<Arc<Self>> {
-        let dir = args
-            .windows(2)
-            .find(|f| f[0] == "--dir")
-            .as_ref()
-            .map(|m| m[1].clone());
-        let dbfilename = args
-            .windows(2)
-            .find(|f| f[0] == "--dbfilename")
-            .as_ref()
-            .map(|m| m[1].clone());
-
-        match (dir, dbfilename) {
-            (Some(dir), Some(dbfilename)) => Some(Arc::new(RedisDatabaseConfig(HashMap::from([
-                (String::from("dir"), dir),
-                (String::from("dbfilename"), dbfilename),
-            ])))),
-            _ => None,
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() {
     env_logger::init();
@@ -54,33 +30,23 @@ async fn main() {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
     log::info!("TCP server running on 127.0.0.1:6379");
 
-    // --- config
     let args: Vec<String> = env::args().collect();
-    let config = RedisDatabaseConfig::from_env_args(args);
-
-    // --- session data
-    let store: RedisStore = Arc::new(Mutex::new(HashMap::new()));
+    let redis_server = RedisServer::init(args);
 
     loop {
         let stream = listener.accept().await;
 
         match stream {
             Ok((stream, _)) => {
-                let store = Arc::clone(&store);
-                let config = config.as_ref().map(|m| Arc::clone(m));
-
-                tokio::spawn(async move { handle_connection(stream, store, config).await });
+                let redis_server = Arc::clone(&redis_server);
+                tokio::spawn(async move { handle_connection(stream, redis_server).await });
             }
             Err(e) => log::error!("{}", e),
         }
     }
 }
 
-async fn handle_connection(
-    stream: TcpStream,
-    mut store: RedisStore,
-    rdb_conf: Option<Arc<RedisDatabaseConfig>>,
-) {
+async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
     let mut handler = RedisConnectionHandler::new(stream);
 
     loop {
@@ -94,10 +60,10 @@ async fn handle_connection(
                 match cmd_as_str.to_uppercase().as_str() {
                     "PING" => ping(),
                     "ECHO" => echo(&args),
-                    "SET" => set(&args, &mut store).await,
-                    "GET" => get(&args, &store).await,
-                    "CONFIG" => config(&args, rdb_conf.as_ref()),
-                    _ => RESPValue::SimpleError(Bytes::from(format!(
+                    "SET" => set(&args, &redis_server).await,
+                    "GET" => get(&args, &redis_server).await,
+                    "CONFIG" => config(&args, &redis_server),
+                    _ => RedisValue::SimpleError(Bytes::from(format!(
                         "Invalid command: '{}'",
                         cmd_as_str
                     ))),

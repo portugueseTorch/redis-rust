@@ -15,26 +15,26 @@ pub struct RedisConnectionHandler {
 }
 
 /// Fundamental type returned by the parser, ready to be consumed by the executor
-pub type RESPResult = Result<Option<RESPValue>>;
+pub type RESPResult = Result<Option<RedisValue>>;
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum RESPValue {
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub enum RedisValue {
     SimpleString(Bytes),
     BulkString(Bytes),
-    Array(Vec<RESPValue>),
+    Array(Vec<RedisValue>),
     NullBulkString,
     SimpleError(Bytes),
 }
 
-impl RESPValue {
-    fn from_token(tok: RESPRaw, buf: &Bytes) -> RESPValue {
+impl RedisValue {
+    fn from_token(tok: RESPRaw, buf: &Bytes) -> RedisValue {
         match tok {
-            RESPRaw::SimpleString(str) => RESPValue::SimpleString(str.as_bytes(&buf)),
-            RESPRaw::BulkString(bulk_str) => RESPValue::BulkString(bulk_str.as_bytes(&buf)),
-            RESPRaw::NullBulkString(_) => RESPValue::NullBulkString,
-            RESPRaw::Array(arr) => RESPValue::Array(
+            RESPRaw::SimpleString(str) => RedisValue::SimpleString(str.as_bytes(&buf)),
+            RESPRaw::BulkString(bulk_str) => RedisValue::BulkString(bulk_str.as_bytes(&buf)),
+            RESPRaw::NullBulkString(_) => RedisValue::NullBulkString,
+            RESPRaw::Array(arr) => RedisValue::Array(
                 arr.into_iter()
-                    .map(|m| RESPValue::from_token(m, buf))
+                    .map(|m| RedisValue::from_token(m, buf))
                     .collect(),
             ),
         }
@@ -63,14 +63,14 @@ impl RedisConnectionHandler {
         match tokenize(&self.buffer, 0)? {
             Some(tok) => {
                 let req_data = self.buffer.split_to(tok.1);
-                let parsed_req = RESPValue::from_token(tok.0, &req_data.freeze());
+                let parsed_req = RedisValue::from_token(tok.0, &req_data.freeze());
 
                 // check request was an array of bulk strings
                 match &parsed_req {
-                    RESPValue::Array(arr) => {
+                    RedisValue::Array(arr) => {
                         for item in arr.iter() {
                             ensure!(
-                                matches!(item, RESPValue::BulkString(_)),
+                                matches!(item, RedisValue::BulkString(_)),
                                 "Request should be an array of bulk strings"
                             )
                         }
@@ -83,7 +83,7 @@ impl RedisConnectionHandler {
         }
     }
 
-    pub async fn write(&mut self, response: RESPValue) -> Result<()> {
+    pub async fn write(&mut self, response: RedisValue) -> Result<()> {
         let serialized_data = response.serialize()?;
 
         self.stream.write(serialized_data.as_bytes()).await.unwrap();

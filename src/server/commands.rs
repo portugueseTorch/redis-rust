@@ -8,14 +8,12 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 
-use crate::{RedisDatabaseConfig, RedisStore};
+use super::{handler::RedisValue, server::RedisServer};
 
-use super::handler::RESPValue;
-
-impl RESPValue {
-    pub fn get_cmd_and_args(self) -> (Bytes, Vec<RESPValue>) {
+impl RedisValue {
+    pub fn get_cmd_and_args(self) -> (Bytes, Vec<RedisValue>) {
         let request = match self {
-            RESPValue::Array(arr) => arr,
+            RedisValue::Array(arr) => arr,
             _ => panic!("Incoming array should be an array"),
         };
 
@@ -25,107 +23,110 @@ impl RESPValue {
         (cmd, args)
     }
 
-    fn unpack_bulk_str(self) -> Result<Bytes> {
+    fn unpack_bulk_str(&self) -> Result<Bytes> {
         match self {
-            RESPValue::BulkString(b) => Ok(b),
+            RedisValue::BulkString(b) => Ok(b.clone()),
             _ => bail!("Should be a bulk string"),
         }
     }
 }
 
-fn get_argument(pos: usize, args: &Vec<RESPValue>) -> Result<Bytes> {
-    args.get(pos)
-        .expect("No key specified for SET command")
-        .clone()
-        .unpack_bulk_str()
+fn get_argument(pos: usize, args: &Vec<RedisValue>) -> &RedisValue {
+    args.get(pos).expect("No key specified for SET command")
 }
 
-pub fn ping() -> RESPValue {
-    RESPValue::SimpleString(Bytes::from_static(b"PONG"))
+pub fn ping() -> RedisValue {
+    RedisValue::SimpleString(Bytes::from_static(b"PONG"))
 }
 
-pub fn echo(args: &Vec<RESPValue>) -> RESPValue {
+pub fn echo(args: &Vec<RedisValue>) -> RedisValue {
     args.first().unwrap().clone()
 }
 
-//    let mut store_lock = store.lock().await;
-//    store_lock.insert(key, (value, timeout_stamp));
+pub async fn set(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    let key = get_argument(0, args).clone();
+    let value = get_argument(1, args).clone();
 
-pub async fn set(args: &Vec<RESPValue>, store: &mut RedisStore) -> RESPValue {
-    let key = get_argument(0, args).unwrap();
-    let value = get_argument(1, args).unwrap();
-    let cmd_arg = args.get(2);
+    let mut main_store = server.main_store.lock().await;
+    let mut expire_store = server.expire_store.lock().await;
 
-    let timeout_stamp = cmd_arg.map(|cmd| {
-        let cmd_as_str = str::from_utf8(&cmd.clone().unpack_bulk_str().unwrap())
+    if let Some(cmd_arg) = args.get(2) {
+        let cmd_as_str = str::from_utf8(&cmd_arg.clone().unpack_bulk_str().unwrap())
             .unwrap()
-            .to_lowercase();
-
-        match cmd_as_str.as_str() {
-            "px" => {
-                let timeout_value_raw =
-                    get_argument(3, args).expect("PX cmd arg should provide a timeout stamp");
+            .to_uppercase();
+        let timeout = match cmd_as_str.as_str() {
+            "PX" => {
+                let timeout_value_raw = get_argument(3, args);
                 let timeout_value: u64 =
-                    str::from_utf8(&timeout_value_raw).unwrap().parse().unwrap();
-
+                    str::from_utf8(&timeout_value_raw.unpack_bulk_str().unwrap())
+                        .unwrap()
+                        .parse()
+                        .unwrap();
                 SystemTime::now() + Duration::from_millis(timeout_value)
             }
             _ => panic!("Invalid command argument for SET: '{}'", cmd_as_str),
-        }
-    });
+        };
+        expire_store.insert(key.clone(), timeout);
+    }
+    main_store.insert(key, value);
 
-    store.lock().await.insert(key, (value, timeout_stamp));
-    RESPValue::SimpleString(Bytes::from_static(b"OK"))
+    RedisValue::SimpleString(Bytes::from_static(b"OK"))
 }
 
-pub async fn get(args: &Vec<RESPValue>, store: &RedisStore) -> RESPValue {
-    let key = get_argument(0, args).unwrap();
+pub async fn get(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    let key = get_argument(0, args);
 
-    let result = {
-        let store = store.lock().await;
-        store.get(&key).cloned()
-    };
+    let mut main_store = server.main_store.lock().await;
+    let mut expire_store = server.expire_store.lock().await;
 
-    match result {
-        Some((_, Some(expiry))) if expiry < SystemTime::now() => RESPValue::NullBulkString,
-        Some((val, _)) => RESPValue::BulkString(val),
-        None => RESPValue::NullBulkString,
+    match main_store.get(&key) {
+        Some(val) => {
+            if let Some(timestamp) = expire_store.get(key) {
+                if timestamp < &SystemTime::now() {
+                    main_store.remove(key);
+                    expire_store.remove(key);
+                    return RedisValue::NullBulkString;
+                }
+            }
+            val.clone()
+        }
+        None => RedisValue::NullBulkString,
     }
 }
 
-pub fn config(args: &Vec<RESPValue>, rdb_conf: Option<&Arc<RedisDatabaseConfig>>) -> RESPValue {
-    let sub_cmd = get_argument(0, args).unwrap();
-    let sub_cmd = str::from_utf8(&sub_cmd).unwrap().to_uppercase();
+pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    let sub_cmd = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap())
+        .unwrap()
+        .to_uppercase();
 
     match sub_cmd.as_str() {
         "GET" => {
-            if rdb_conf.is_none() {
-                return RESPValue::SimpleError(Bytes::from_static(b"No config object exists"));
+            if server.config.is_none() {
+                return RedisValue::SimpleError(Bytes::from_static(b"No config object exists"));
             }
 
-            let mut resp: Vec<RESPValue> = Vec::new();
-            let config = rdb_conf.unwrap();
+            let mut resp: Vec<RedisValue> = Vec::new();
+            let config = server.config.as_ref().unwrap();
 
             for arg in args.iter().skip(1) {
                 let raw_key = arg.clone().unpack_bulk_str().unwrap();
                 let key = String::from(str::from_utf8(&raw_key).unwrap());
 
-                match config.0.get(&key) {
-                    Some(val) => {
-                        let key_as_bytes = Bytes::copy_from_slice(key.as_bytes());
-                        let val_as_bytes = Bytes::copy_from_slice(val.clone().as_bytes());
-
-                        resp.extend([
-                            RESPValue::BulkString(key_as_bytes),
-                            RESPValue::BulkString(val_as_bytes),
-                        ])
-                    }
-                    None => {}
+                match key.as_str() {
+                    "dir" => resp.extend([
+                        RedisValue::BulkString(Bytes::from(key)),
+                        RedisValue::BulkString(Bytes::from(config.dir.clone())),
+                    ]),
+                    "dbfilename" => resp.extend([
+                        RedisValue::BulkString(Bytes::from(key)),
+                        RedisValue::BulkString(Bytes::from(config.dbfilename.clone())),
+                    ]),
+                    _ => {}
                 }
             }
-            RESPValue::Array(resp)
+            RedisValue::Array(resp)
         }
-        _ => RESPValue::SimpleError(Bytes::from(format!(
+        _ => RedisValue::SimpleError(Bytes::from(format!(
             "Invalid sub command for 'CONFIG': '{}'",
             sub_cmd
         ))),
