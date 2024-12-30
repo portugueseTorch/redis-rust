@@ -31,7 +31,7 @@ async fn main() {
     log::info!("TCP server running on 127.0.0.1:6379");
 
     let args: Vec<String> = env::args().collect();
-    let redis_server = RedisServer::init(args);
+    let redis_server = RedisServer::init(args).expect("Failure initializing server");
 
     loop {
         let stream = listener.accept().await;

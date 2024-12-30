@@ -2,7 +2,7 @@ use core::str;
 use std::{
     collections::HashMap,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Result};
@@ -62,7 +62,11 @@ pub async fn set(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
                         .unwrap()
                         .parse()
                         .unwrap();
-                SystemTime::now() + Duration::from_millis(timeout_value)
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64
+                    + timeout_value
             }
             _ => panic!("Invalid command argument for SET: '{}'", cmd_as_str),
         };
@@ -82,7 +86,12 @@ pub async fn get(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     match main_store.get(&key) {
         Some(val) => {
             if let Some(timestamp) = expire_store.get(key) {
-                if timestamp < &SystemTime::now() {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+
+                if timestamp < &now {
                     main_store.remove(key);
                     expire_store.remove(key);
                     return RedisValue::NullBulkString;
