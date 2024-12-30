@@ -103,6 +103,11 @@ pub async fn get(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     }
 }
 
+pub fn keys(args: &Vec<RedisValue>, _server: &RedisServer) -> RedisValue {
+    let _pattern = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap()).unwrap();
+    RedisValue::Array(vec![])
+}
+
 pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     let sub_cmd = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap())
         .unwrap()
