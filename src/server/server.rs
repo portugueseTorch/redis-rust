@@ -58,9 +58,16 @@ impl RedisServer {
 
     fn from_rdbfile(file_path: &Path) -> anyhow::Result<Self> {
         // --- open file and read contents into buf
-        let rdbfile = File::open(file_path)?;
+        let rdbfile = File::open(file_path);
+        if rdbfile.is_err() {
+            return Ok(Self {
+                config: None,
+                main_store: Arc::new(Mutex::new(HashMap::new())),
+                expire_store: Arc::new(Mutex::new(HashMap::new())),
+            });
+        }
         let mut buf: Vec<u8> = vec![];
-        let mut reader = BufReader::new(rdbfile);
+        let mut reader = BufReader::new(rdbfile.unwrap());
         reader.read_to_end(&mut buf)?;
 
         let fb_pos = buf.iter().position(|&b| b == 0xfb).unwrap();
