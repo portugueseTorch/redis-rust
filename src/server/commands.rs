@@ -103,9 +103,24 @@ pub async fn get(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     }
 }
 
-pub fn keys(args: &Vec<RedisValue>, _server: &RedisServer) -> RedisValue {
+pub async fn keys(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     let _pattern = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap()).unwrap();
-    RedisValue::Array(vec![])
+    let main_store_lock = server.main_store.lock().await;
+    let expire_store_lock = server.expire_store.lock().await;
+
+    let mut res = vec![];
+
+    for key in main_store_lock.keys() {
+        // --- if expired, skip it
+        let expire_key = expire_store_lock.get(key);
+        if expire_key.is_some_and(|&k| k < now()) {
+            continue;
+        }
+
+        res.push(key.clone());
+    }
+
+    RedisValue::Array(res)
 }
 
 pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
@@ -145,4 +160,11 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
             sub_cmd
         ))),
     }
+}
+
+pub fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }

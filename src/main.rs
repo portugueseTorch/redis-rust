@@ -62,7 +62,7 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
                     "ECHO" => echo(&args),
                     "SET" => set(&args, &redis_server).await,
                     "GET" => get(&args, &redis_server).await,
-                    "KEYS" => keys(&args, &redis_server),
+                    "KEYS" => keys(&args, &redis_server).await,
                     "CONFIG" => config(&args, &redis_server),
                     _ => RedisValue::SimpleError(Bytes::from(format!(
                         "Invalid command: '{}'",
