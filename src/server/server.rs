@@ -42,10 +42,7 @@ impl RedisServer {
             .map(|m| m[1].clone());
 
         let server = match (dir, dbfilename) {
-            (Some(dir), Some(dbfilename)) => {
-                let path = Path::new(&dir).join(&dbfilename);
-                RedisServer::from_rdbfile(&path)?
-            }
+            (Some(dir), Some(dbfilename)) => RedisServer::from_rdbfile(&dir, &dbfilename)?,
             _ => Self {
                 config: None,
                 main_store: Arc::new(Mutex::new(HashMap::new())),
@@ -56,9 +53,10 @@ impl RedisServer {
         Ok(Arc::new(server))
     }
 
-    fn from_rdbfile(file_path: &Path) -> anyhow::Result<Self> {
+    fn from_rdbfile(dir: &str, dbfilename: &str) -> anyhow::Result<Self> {
         // --- open file and read contents into buf
-        let rdbfile = File::open(file_path);
+        let path = Path::new(&dir).join(&dbfilename);
+        let rdbfile = File::open(path);
         if rdbfile.is_err() {
             return Ok(Self {
                 config: None,
@@ -145,9 +143,12 @@ impl RedisServer {
         }
 
         Ok(Self {
-            config: None,
             main_store: Arc::new(Mutex::new(main_store)),
             expire_store: Arc::new(Mutex::new(expire_store)),
+            config: Some(Arc::new(RedisDatabaseConfig {
+                dir: dir.to_string(),
+                dbfilename: dbfilename.to_string(),
+            })),
         })
     }
 }
