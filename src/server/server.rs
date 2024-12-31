@@ -54,12 +54,17 @@ impl RedisServer {
     }
 
     fn from_rdbfile(dir: &str, dbfilename: &str) -> anyhow::Result<Self> {
+        let config = RedisDatabaseConfig {
+            dir: dir.to_string(),
+            dbfilename: dbfilename.to_string(),
+        };
+
         // --- open file and read contents into buf
         let path = Path::new(&dir).join(&dbfilename);
         let rdbfile = File::open(path);
         if rdbfile.is_err() {
             return Ok(Self {
-                config: None,
+                config: Some(Arc::new(config)),
                 main_store: Arc::new(Mutex::new(HashMap::new())),
                 expire_store: Arc::new(Mutex::new(HashMap::new())),
             });
@@ -136,7 +141,7 @@ impl RedisServer {
         if !parsing_complete {
             log::error!("Error while parsing rdbfile. Defaulting to empty stores...");
             return Ok(Self {
-                config: None,
+                config: Some(Arc::new(config)),
                 main_store: Arc::new(Mutex::new(HashMap::new())),
                 expire_store: Arc::new(Mutex::new(HashMap::new())),
             });
@@ -145,10 +150,7 @@ impl RedisServer {
         Ok(Self {
             main_store: Arc::new(Mutex::new(main_store)),
             expire_store: Arc::new(Mutex::new(expire_store)),
-            config: Some(Arc::new(RedisDatabaseConfig {
-                dir: dir.to_string(),
-                dbfilename: dbfilename.to_string(),
-            })),
+            config: Some(Arc::new(config)),
         })
     }
 }
