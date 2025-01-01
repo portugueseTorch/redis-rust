@@ -6,6 +6,13 @@ use bytes::Bytes;
 
 use super::{handler::RedisValue, server::RedisServer};
 
+pub fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
 impl RedisValue {
     pub fn get_cmd_and_args(self) -> (Bytes, Vec<RedisValue>) {
         let request = match self {
@@ -158,9 +165,6 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     }
 }
 
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
+pub fn info(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    RedisValue::BulkString(Bytes::from_static(b"role:master"))
 }

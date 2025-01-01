@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use clap::Parser;
 use server::{
-    commands::{config, echo, get, keys, ping, set},
+    commands::{config, echo, get, info, keys, ping, set},
     handler::{RedisConnectionHandler, RedisValue},
     server::RedisServer,
 };
@@ -59,6 +59,7 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
                 match cmd_as_str.to_uppercase().as_str() {
                     "PING" => ping(),
                     "ECHO" => echo(&args),
+                    "INFO" => info(&args, &redis_server),
                     "SET" => set(&args, &redis_server).await,
                     "GET" => get(&args, &redis_server).await,
                     "KEYS" => keys(&args, &redis_server).await,
