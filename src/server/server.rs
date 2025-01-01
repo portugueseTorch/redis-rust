@@ -9,7 +9,11 @@ use std::{
 
 use anyhow::Result;
 use bytes::Bytes;
-use tokio::{net::TcpListener, sync::Mutex};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
 
 use crate::Args;
 
@@ -58,14 +62,15 @@ impl RedisServer {
 
         // --- start connection with master, if replica
         let master_listener: Result<Option<i32>> = if let Some(master_addr) = replicaof {
-            let master_addr: Vec<&str> = master_addr.split(" ").collect();
-            let _master_addr = master_addr.join(":");
+            let master_addr = master_addr.replace(" ", ":");
+            let mut socket = TcpStream::connect(master_addr).await?;
+            let _ = socket.write(b"*1\r\n$4\r\nPING\r\n").await?;
 
             Ok(Some(42))
         } else {
             Ok(None)
         };
-        let master_listener = master_listener.unwrap();
+        let master_listener = master_listener?;
 
         // --- init stores or load state from rdb file
         let (main_store, expire_store, config): RedisServerAux = match (dir, dbfilename) {
