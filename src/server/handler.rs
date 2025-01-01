@@ -7,7 +7,7 @@ use tokio::{
 
 use crate::server::serde::tokenize;
 
-use super::serde::{RESPRaw, RESPToken};
+use super::serde::RESPRaw;
 
 pub struct RedisConnectionHandler {
     stream: TcpStream,

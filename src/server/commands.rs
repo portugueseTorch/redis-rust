@@ -153,7 +153,7 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
                         RedisValue::BulkString(Bytes::from(key)),
                         RedisValue::BulkString(Bytes::from(config.dbfilename.clone())),
                     ]),
-                    _ => {}
+                    _ => continue,
                 }
             }
             RedisValue::Array(resp)

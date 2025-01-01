@@ -1,5 +1,4 @@
 use core::str;
-use std::cmp::Ordering;
 
 use anyhow::{bail, Result};
 use bytes::{Bytes, BytesMut};
