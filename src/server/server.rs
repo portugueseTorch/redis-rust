@@ -9,7 +9,9 @@ use std::{
 
 use anyhow::Result;
 use bytes::Bytes;
-use tokio::sync::Mutex;
+use tokio::{net::TcpListener, sync::Mutex};
+
+use crate::Args;
 
 use super::handler::RedisValue;
 
@@ -18,43 +20,45 @@ const LEN_DECODING_MASK: u8 = 0b00111111;
 
 pub type RedisMainStore = Arc<Mutex<HashMap<RedisValue, RedisValue>>>;
 pub type RedisExpireStore = Arc<Mutex<HashMap<RedisValue, u64>>>;
-pub struct RedisDatabaseConfig {
+pub struct RedisServerConfig {
     pub dir: String,
     pub dbfilename: String,
 }
 
 pub struct RedisServer {
-    pub config: Option<Arc<RedisDatabaseConfig>>,
+    pub config: Option<Arc<RedisServerConfig>>,
     pub main_store: RedisMainStore,
     pub expire_store: RedisExpireStore,
+    pub listener: TcpListener,
 }
 impl RedisServer {
-    pub fn init(args: Vec<String>) -> anyhow::Result<Arc<Self>> {
-        let dir = args
-            .windows(2)
-            .find(|f| f[0] == "--dir")
-            .as_ref()
-            .map(|m| m[1].clone());
-        let dbfilename = args
-            .windows(2)
-            .find(|f| f[0] == "--dbfilename")
-            .as_ref()
-            .map(|m| m[1].clone());
+    pub async fn init(args: Args) -> anyhow::Result<Arc<Self>> {
+        let dir = args.dir;
+        let dbfilename = args.dbfilename;
+        let port = args.port.unwrap_or(6379);
+
+        let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
+        log::info!("TCP server running on 127.0.0.1:{}", port);
 
         let server = match (dir, dbfilename) {
-            (Some(dir), Some(dbfilename)) => RedisServer::from_rdbfile(&dir, &dbfilename)?,
+            (Some(dir), Some(dbfilename)) => {
+                RedisServer::from_rdbfile(&dir, &dbfilename, listener)?
+            }
             _ => Self {
                 config: None,
                 main_store: Arc::new(Mutex::new(HashMap::new())),
                 expire_store: Arc::new(Mutex::new(HashMap::new())),
+                listener,
             },
         };
 
         Ok(Arc::new(server))
     }
 
-    fn from_rdbfile(dir: &str, dbfilename: &str) -> anyhow::Result<Self> {
-        let config = RedisDatabaseConfig {
+    fn from_rdbfile(dir: &str, dbfilename: &str, listener: TcpListener) -> anyhow::Result<Self> {
+        let config = RedisServerConfig {
             dir: dir.to_string(),
             dbfilename: dbfilename.to_string(),
         };
@@ -67,6 +71,7 @@ impl RedisServer {
                 config: Some(Arc::new(config)),
                 main_store: Arc::new(Mutex::new(HashMap::new())),
                 expire_store: Arc::new(Mutex::new(HashMap::new())),
+                listener,
             });
         }
         let mut buf: Vec<u8> = vec![];
@@ -144,6 +149,7 @@ impl RedisServer {
                 config: Some(Arc::new(config)),
                 main_store: Arc::new(Mutex::new(HashMap::new())),
                 expire_store: Arc::new(Mutex::new(HashMap::new())),
+                listener,
             });
         }
 
@@ -151,6 +157,7 @@ impl RedisServer {
             main_store: Arc::new(Mutex::new(main_store)),
             expire_store: Arc::new(Mutex::new(expire_store)),
             config: Some(Arc::new(config)),
+            listener,
         })
     }
 }

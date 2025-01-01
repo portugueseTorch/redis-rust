@@ -1,9 +1,5 @@
 use core::str;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;

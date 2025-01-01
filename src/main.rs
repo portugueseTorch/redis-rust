@@ -1,40 +1,39 @@
-#![allow(unused_imports)]
+#[allow(unused_imports)]
 use core::str;
-use std::{
-    borrow::BorrowMut,
-    collections::HashMap,
-    env,
-    net::{IpAddr, Ipv4Addr},
-    sync::Arc,
-    time::SystemTime,
-};
+use std::sync::Arc;
 
 use bytes::Bytes;
+use clap::Parser;
 use server::{
     commands::{config, echo, get, keys, ping, set},
     handler::{RedisConnectionHandler, RedisValue},
     server::RedisServer,
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::net::TcpStream;
 
 mod server;
+
+#[derive(Parser, Debug)]
+pub struct Args {
+    #[arg(long)]
+    pub dir: Option<String>,
+    #[arg(long)]
+    pub dbfilename: Option<String>,
+    #[arg(long)]
+    pub port: Option<usize>,
+}
 
 #[tokio::main]
 async fn main() {
     env_logger::init();
 
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
-    log::info!("TCP server running on 127.0.0.1:6379");
-
-    let args: Vec<String> = env::args().collect();
-    let redis_server = RedisServer::init(args).expect("Failure initializing server");
+    let args = Args::parse();
+    let redis_server = RedisServer::init(args)
+        .await
+        .expect("Failure initializing server");
 
     loop {
-        let stream = listener.accept().await;
+        let stream = redis_server.listener.accept().await;
 
         match stream {
             Ok((stream, _)) => {
