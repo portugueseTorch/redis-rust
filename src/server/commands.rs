@@ -1,5 +1,8 @@
 use core::str;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    fmt::Display,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
@@ -171,5 +174,15 @@ pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
         .as_ref()
         .map_or("master", |_| "slave");
 
-    RedisValue::BulkString(Bytes::from(format!("role:{}", role)))
+    // --- format info args
+    let role = format_info("role", &role);
+    let repl_id = format_info("master_replid", &server.replication_id);
+    let repl_offset = format_info("master_repl_offset", &server.replication_offset);
+    let info_data = vec![role, repl_id, repl_offset].join("\r\n");
+
+    RedisValue::BulkString(Bytes::from(info_data))
+}
+
+fn format_info<V: Display>(key: &str, value: &V) -> String {
+    format!("{}:{}", key, value)
 }

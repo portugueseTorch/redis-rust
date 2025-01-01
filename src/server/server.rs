@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufReader, Read},
-    net::TcpStream,
     path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -40,6 +39,10 @@ pub struct RedisServer {
     pub listener: TcpListener,
     /// listener for the master connection - is some only for replicas
     pub master_listener: Option<i32>,
+    /// master replication ID
+    pub replication_id: String,
+    /// offset into the circluar replication buffer
+    pub replication_offset: usize,
 }
 impl RedisServer {
     pub async fn init(args: Args) -> anyhow::Result<Arc<Self>> {
@@ -86,6 +89,9 @@ impl RedisServer {
             config,
             listener,
             master_listener,
+            //
+            replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+            replication_offset: 0,
         }))
     }
 
