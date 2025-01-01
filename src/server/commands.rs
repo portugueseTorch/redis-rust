@@ -165,6 +165,11 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     }
 }
 
-pub fn info(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    RedisValue::BulkString(Bytes::from_static(b"role:master"))
+pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    let role = server
+        .master_listener
+        .as_ref()
+        .map_or("master", |_| "slave");
+
+    RedisValue::BulkString(Bytes::from(format!("role:{}", role)))
 }

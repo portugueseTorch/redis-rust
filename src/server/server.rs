@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{BufReader, Read},
+    net::TcpStream,
     path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -25,39 +26,71 @@ pub struct RedisServerConfig {
     pub dbfilename: String,
 }
 
+type RedisServerAux = (
+    RedisMainStore,
+    RedisExpireStore,
+    Option<Arc<RedisServerConfig>>,
+);
+
 pub struct RedisServer {
     pub config: Option<Arc<RedisServerConfig>>,
     pub main_store: RedisMainStore,
     pub expire_store: RedisExpireStore,
+    /// listener for the client connection
     pub listener: TcpListener,
+    /// listener for the master connection - is some only for replicas
+    pub master_listener: Option<i32>,
 }
 impl RedisServer {
     pub async fn init(args: Args) -> anyhow::Result<Arc<Self>> {
         let dir = args.dir;
         let dbfilename = args.dbfilename;
         let port = args.port.unwrap_or(6379);
+        let replicaof = args.replicaof;
 
+        // --- set up client listener
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
             .await
             .unwrap();
-        log::info!("TCP server running on 127.0.0.1:{}", port);
 
-        let server = match (dir, dbfilename) {
-            (Some(dir), Some(dbfilename)) => {
-                RedisServer::from_rdbfile(&dir, &dbfilename, listener)?
-            }
-            _ => Self {
-                config: None,
-                main_store: Arc::new(Mutex::new(HashMap::new())),
-                expire_store: Arc::new(Mutex::new(HashMap::new())),
-                listener,
-            },
+        // --- start connection with master, if replica
+        let master_listener: Result<Option<i32>> = if let Some(master_addr) = replicaof {
+            let master_addr: Vec<&str> = master_addr.split(" ").collect();
+            let _master_addr = master_addr.join(":");
+
+            Ok(Some(42))
+        } else {
+            Ok(None)
+        };
+        let master_listener = master_listener.unwrap();
+
+        // --- init stores or load state from rdb file
+        let (main_store, expire_store, config): RedisServerAux = match (dir, dbfilename) {
+            (Some(dir), Some(dbfilename)) => RedisServer::from_rdbfile(&dir, &dbfilename)?,
+            _ => (
+                Arc::new(Mutex::new(HashMap::new())),
+                Arc::new(Mutex::new(HashMap::new())),
+                None,
+            ),
         };
 
-        Ok(Arc::new(server))
+        log::info!(
+            "Redis {}server running on 127.0.0.1:{}",
+            master_listener.as_ref().map_or("", |_| "replica "),
+            port
+        );
+
+        Ok(Arc::new(Self {
+            main_store,
+            expire_store,
+            config,
+            listener,
+            master_listener,
+        }))
     }
 
-    fn from_rdbfile(dir: &str, dbfilename: &str, listener: TcpListener) -> anyhow::Result<Self> {
+    fn from_rdbfile(dir: &str, dbfilename: &str) -> anyhow::Result<RedisServerAux> {
+        // --- redis config
         let config = RedisServerConfig {
             dir: dir.to_string(),
             dbfilename: dbfilename.to_string(),
@@ -67,12 +100,11 @@ impl RedisServer {
         let path = Path::new(&dir).join(&dbfilename);
         let rdbfile = File::open(path);
         if rdbfile.is_err() {
-            return Ok(Self {
-                config: Some(Arc::new(config)),
-                main_store: Arc::new(Mutex::new(HashMap::new())),
-                expire_store: Arc::new(Mutex::new(HashMap::new())),
-                listener,
-            });
+            return Ok((
+                Arc::new(Mutex::new(HashMap::new())),
+                Arc::new(Mutex::new(HashMap::new())),
+                Some(Arc::new(config)),
+            ));
         }
         let mut buf: Vec<u8> = vec![];
         let mut reader = BufReader::new(rdbfile.unwrap());
@@ -145,20 +177,18 @@ impl RedisServer {
 
         if !parsing_complete {
             log::error!("Error while parsing rdbfile. Defaulting to empty stores...");
-            return Ok(Self {
-                config: Some(Arc::new(config)),
-                main_store: Arc::new(Mutex::new(HashMap::new())),
-                expire_store: Arc::new(Mutex::new(HashMap::new())),
-                listener,
-            });
+            return Ok((
+                Arc::new(Mutex::new(HashMap::new())),
+                Arc::new(Mutex::new(HashMap::new())),
+                Some(Arc::new(config)),
+            ));
         }
 
-        Ok(Self {
-            main_store: Arc::new(Mutex::new(main_store)),
-            expire_store: Arc::new(Mutex::new(expire_store)),
-            config: Some(Arc::new(config)),
-            listener,
-        })
+        Ok((
+            Arc::new(Mutex::new(main_store)),
+            Arc::new(Mutex::new(expire_store)),
+            Some(Arc::new(config)),
+        ))
     }
 }
 

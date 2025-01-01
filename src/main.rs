@@ -21,6 +21,8 @@ pub struct Args {
     pub dbfilename: Option<String>,
     #[arg(long)]
     pub port: Option<usize>,
+    #[arg(long)]
+    pub replicaof: Option<String>,
 }
 
 #[tokio::main]
