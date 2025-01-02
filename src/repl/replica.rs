@@ -65,7 +65,7 @@ impl RedisReplicaContext {
             RedisValue::BulkString(Bytes::from_static(b"-1")),
         ]);
         handler.write(psync_req).await?;
-        // let _ = handler.read_and_parse().await?;
+        let _ = handler.read_and_parse().await?;
 
         Ok(Self {
             master_replid: gen_uuid(),

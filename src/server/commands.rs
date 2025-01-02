@@ -254,10 +254,8 @@ pub async fn psync(ctx: &mut CommandContext<'_>) -> Result<usize> {
     file.read_to_end(&mut buf).await?;
 
     let file_header = format!("${}\r\n", buf.len());
-    let bytes = ctx
-        .handler
-        .write_raw(&[file_header.as_bytes(), &buf].concat())
-        .await?;
+    let raw_data = &[file_header.as_bytes(), &buf].concat();
+    let bytes = ctx.handler.write_raw(raw_data).await?;
 
     Ok(bytes)
 }
