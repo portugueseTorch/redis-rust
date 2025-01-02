@@ -254,13 +254,13 @@ pub async fn psync(ctx: &mut CommandContext<'_>) -> Result<usize> {
     let mut buf = vec![];
     file.read_to_end(&mut buf).await?;
 
-    let bytes_len = ctx
+    let file_header = format!("${}\r\n", buf.len());
+    let bytes = ctx
         .handler
-        .write_raw(format!("${}\r\n", buf.len()).as_bytes())
+        .write_raw(&[file_header.as_bytes(), &buf].concat())
         .await?;
-    let bytes_content = ctx.handler.write_raw(&buf).await?;
 
-    Ok(bytes_len + bytes_content)
+    Ok(bytes)
 }
 
 fn format_info<V: Display>(key: &str, value: &V) -> String {
