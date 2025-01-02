@@ -79,4 +79,10 @@ impl RedisConnectionHandler {
 
         Ok(bytes)
     }
+
+    pub async fn flush(&mut self) -> Result<()> {
+        self.stream.flush().await?;
+
+        Ok(())
+    }
 }

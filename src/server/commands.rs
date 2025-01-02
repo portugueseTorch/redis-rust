@@ -247,6 +247,7 @@ pub async fn psync(ctx: &mut CommandContext<'_>) -> Result<usize> {
         ctx.server.server_context.get_master_replid()
     )));
     ctx.handler.write(res).await?;
+    ctx.handler.flush().await?;
 
     // --- send rdb dump over the wire for fullsync
     let mut file = File::open("empty.rdb").await?;
