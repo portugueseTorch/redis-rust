@@ -7,6 +7,8 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 
+use crate::repl::ServerContext;
+
 use super::{handler::RedisValue, server::RedisServer};
 
 pub fn now() -> u64 {
@@ -169,18 +171,47 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
 }
 
 pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let role = server
-        .replica_context
-        .as_ref()
-        .map_or("master", |_| "slave");
+    let info_data = match &server.server_context {
+        ServerContext::Master(ctx) => {
+            let role = format_info("role", &"master");
+            let repl_id = format_info("master_replid", &ctx.master_replid);
+            let repl_offset = format_info("master_repl_offset", &ctx.master_repl_offset);
+            vec![role, repl_id, repl_offset].join("\r\n")
+        }
+        ServerContext::Replica(ctx) => {
+            let role = format_info("role", &"slave");
+            let master_replid = format_info("master_replid", &ctx.master_replid);
+            let master_repl_offset = format_info("master_repl_offset", &ctx.master_repl_offset);
+            let slave_repl_offset = format_info("slave_repl_offset", &ctx.slave_repl_offset);
+            let master_replid2 = format_info(
+                "master_replid2",
+                &ctx.master_replid2.as_ref().unwrap_or(&"".to_string()),
+            );
+            let second_repl_offset = format_info(
+                "second_repl_offset",
+                &ctx.second_repl_offset.map_or(-1, |m| m as i32),
+            );
 
-    // --- format info args
-    let role = format_info("role", &role);
-    let repl_id = format_info("master_replid", &server.replication_id);
-    let repl_offset = format_info("master_repl_offset", &server.replication_offset);
-    let info_data = vec![role, repl_id, repl_offset].join("\r\n");
+            vec![
+                role,
+                master_replid,
+                master_repl_offset,
+                slave_repl_offset,
+                master_replid2,
+                second_repl_offset,
+            ]
+            .join("\r\n")
+        }
+    };
 
     RedisValue::BulkString(Bytes::from(info_data))
+}
+
+pub async fn psync(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
+    RedisValue::SimpleString(Bytes::from(format!(
+        "+FULLRESYNC {} 0\r\n",
+        server.server_context.get_master_replid()
+    )))
 }
 
 fn format_info<V: Display>(key: &str, value: &V) -> String {

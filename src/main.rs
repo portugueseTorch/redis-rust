@@ -5,13 +5,13 @@ use std::sync::Arc;
 use bytes::Bytes;
 use clap::Parser;
 use server::{
-    commands::{config, echo, get, info, keys, ping, set},
+    commands::{config, echo, get, info, keys, ping, psync, set},
     handler::{RedisConnectionHandler, RedisValue},
     server::RedisServer,
 };
 use tokio::net::TcpStream;
 
-mod replica;
+mod repl;
 mod server;
 
 #[derive(Parser, Debug)]
@@ -83,6 +83,7 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
                     "GET" => get(&args, &redis_server).await,
                     "KEYS" => keys(&args, &redis_server).await,
                     "REPLCONF" => RedisValue::SimpleString(Bytes::from_static(b"OK")),
+                    "PSYNC" => psync(&args, &redis_server).await,
                     "CONFIG" => config(&args, &redis_server),
                     _ => RedisValue::SimpleError(Bytes::from(format!(
                         "Invalid command: '{}'",

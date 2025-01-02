@@ -11,7 +11,10 @@ use anyhow::Result;
 use bytes::Bytes;
 use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::{replica::RedisReplicaContext, Args};
+use crate::{
+    repl::{master::RedisMasterContext, replica::RedisReplicaContext, ServerContext},
+    Args,
+};
 
 use super::handler::RedisValue;
 
@@ -37,34 +40,23 @@ pub struct RedisServer {
     pub expire_store: RedisExpireStore,
     /// listener for the client connection
     pub listener: TcpListener,
-    /// replica context, only some if server instance is a replica
-    pub replica_context: Option<RedisReplicaContext>,
-    /// master replication ID
-    pub replication_id: String,
-    /// offset into the circluar replication buffer
-    pub replication_offset: usize,
+    /// server context holding either master or replica context
+    pub server_context: ServerContext,
 }
 impl RedisServer {
     pub async fn init(args: Args) -> anyhow::Result<Arc<Self>> {
         let dir = args.dir;
         let dbfilename = args.dbfilename;
         let port = args.port.unwrap_or(6379);
-        let replicaof = args.replicaof;
+        let replica_of = args.replicaof;
 
         // --- set up client listener
         let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
             .await
             .unwrap();
 
-        // --- start connection with master, if replica
-        let replica_context = if let Some(master_addr) = replicaof {
-            let master_addr = master_addr.replace(" ", ":");
-            let ctx = RedisReplicaContext::connect(port, master_addr).await?;
-
-            Some(ctx)
-        } else {
-            None
-        };
+        // --- master/replica context
+        let server_context = ServerContext::new(replica_of, port).await?;
 
         // --- init stores or load state from rdb file
         let (main_store, expire_store, config): RedisServerAux = match (dir, dbfilename) {
@@ -76,20 +68,18 @@ impl RedisServer {
             ),
         };
 
-        log::info!(
-            "Redis {}server running on 127.0.0.1:{}",
-            replica_context.as_ref().map_or("", |_| "replica "),
-            port
-        );
+        if server_context.is_master() {
+            log::info!("Redis server running on 127.0.0.1:{}", port);
+        } else {
+            log::info!("Redis replica running on 127.0.0.1:{}", port);
+        }
 
         Ok(Arc::new(Self {
             main_store,
             expire_store,
             config,
             listener,
-            replica_context,
-            replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
-            replication_offset: 0,
+            server_context,
         }))
     }
 
