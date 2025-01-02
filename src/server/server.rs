@@ -11,10 +11,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::{
-    repl::{master::RedisMasterContext, replica::RedisReplicaContext, ServerContext},
-    Args,
-};
+use crate::{repl::ServerContext, Args};
 
 use super::handler::RedisValue;
 

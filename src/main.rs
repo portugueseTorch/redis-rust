@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use clap::Parser;
 use server::{
-    commands::{config, echo, get, info, keys, ping, psync, set},
+    commands::{config, echo, get, info, keys, ping, psync, replconf, set, CommandContext},
     handler::{RedisConnectionHandler, RedisValue},
     server::RedisServer,
 };
@@ -70,33 +70,39 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
             }
         };
 
-        let response = match parsed_request {
+        match parsed_request {
             Some(value) => {
                 let (cmd, args) = value.get_cmd_and_args();
                 let cmd_as_str = str::from_utf8(&cmd).unwrap();
+                let mut ctx = CommandContext {
+                    args: &args,
+                    server: &redis_server,
+                    handler: &mut handler,
+                };
 
                 match cmd_as_str.to_uppercase().as_str() {
-                    "PING" => ping(),
-                    "ECHO" => echo(&args),
-                    "INFO" => info(&args, &redis_server),
-                    "SET" => set(&args, &redis_server).await,
-                    "GET" => get(&args, &redis_server).await,
-                    "KEYS" => keys(&args, &redis_server).await,
-                    "REPLCONF" => RedisValue::SimpleString(Bytes::from_static(b"OK")),
-                    "PSYNC" => psync(&args, &redis_server).await,
-                    "CONFIG" => config(&args, &redis_server),
-                    _ => RedisValue::SimpleError(Bytes::from(format!(
-                        "Invalid command: '{}'",
-                        cmd_as_str
-                    ))),
+                    "PING" => ping(&mut ctx).await.unwrap(),
+                    "ECHO" => echo(&mut ctx).await.unwrap(),
+                    "INFO" => info(&mut ctx).await.unwrap(),
+                    "SET" => set(&mut ctx).await.unwrap(),
+                    "GET" => get(&mut ctx).await.unwrap(),
+                    "KEYS" => keys(&mut ctx).await.unwrap(),
+                    "REPLCONF" => replconf(&mut ctx).await.unwrap(),
+                    "PSYNC" => psync(&mut ctx).await.unwrap(),
+                    "CONFIG" => config(&mut ctx).await.unwrap(),
+                    _ => {
+                        let res = RedisValue::SimpleError(Bytes::from(format!(
+                            "Invalid command: '{}'",
+                            cmd_as_str
+                        )));
+                        handler.write(res).await.unwrap()
+                    }
                 }
             }
             None => {
                 break;
             }
         };
-
-        handler.write(response).await.unwrap();
     }
 
     log::info!("Closing connection...");

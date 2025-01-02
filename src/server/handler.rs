@@ -69,8 +69,14 @@ impl RedisConnectionHandler {
 
     pub async fn write(&mut self, response: RedisValue) -> Result<usize> {
         let serialized_data = response.serialize()?;
-        let bytes_written = self.stream.write(serialized_data.as_bytes()).await.unwrap();
+        let bytes = self.stream.write(serialized_data.as_bytes()).await?;
 
-        Ok(bytes_written)
+        Ok(bytes)
+    }
+
+    pub async fn write_raw(&mut self, data: &[u8]) -> Result<usize> {
+        let bytes = self.stream.write(data).await?;
+
+        Ok(bytes)
     }
 }

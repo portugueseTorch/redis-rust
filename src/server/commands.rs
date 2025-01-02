@@ -6,16 +6,26 @@ use std::{
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
+use tokio::{fs::File, io::AsyncReadExt};
 
 use crate::repl::ServerContext;
 
-use super::{handler::RedisValue, server::RedisServer};
+use super::{
+    handler::{RedisConnectionHandler, RedisValue},
+    server::RedisServer,
+};
 
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64
+}
+
+pub struct CommandContext<'a> {
+    pub args: &'a Vec<RedisValue>,
+    pub server: &'a RedisServer,
+    pub handler: &'a mut RedisConnectionHandler,
 }
 
 impl RedisValue {
@@ -43,28 +53,34 @@ fn get_argument(pos: usize, args: &Vec<RedisValue>) -> &RedisValue {
     args.get(pos).expect("No key specified for SET command")
 }
 
-pub fn ping() -> RedisValue {
-    RedisValue::SimpleString(Bytes::from_static(b"PONG"))
+pub async fn ping(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let res = RedisValue::SimpleString(Bytes::from_static(b"PONG"));
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub fn echo(args: &Vec<RedisValue>) -> RedisValue {
-    args.first().unwrap().clone()
+pub async fn echo(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let res = ctx.args.first().unwrap().clone();
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub async fn set(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let key = get_argument(0, args).clone();
-    let value = get_argument(1, args).clone();
+pub async fn set(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let key = get_argument(0, ctx.args).clone();
+    let value = get_argument(1, ctx.args).clone();
 
-    let mut main_store = server.main_store.lock().await;
-    let mut expire_store = server.expire_store.lock().await;
+    let mut main_store = ctx.server.main_store.lock().await;
+    let mut expire_store = ctx.server.expire_store.lock().await;
 
-    if let Some(cmd_arg) = args.get(2) {
+    if let Some(cmd_arg) = ctx.args.get(2) {
         let cmd_as_str = str::from_utf8(&cmd_arg.clone().unpack_bulk_str().unwrap())
             .unwrap()
             .to_uppercase();
         let timeout = match cmd_as_str.as_str() {
             "PX" => {
-                let timeout_value_raw = get_argument(3, args);
+                let timeout_value_raw = get_argument(3, ctx.args);
                 let timeout_value: u64 =
                     str::from_utf8(&timeout_value_raw.unpack_bulk_str().unwrap())
                         .unwrap()
@@ -82,39 +98,41 @@ pub async fn set(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     }
     main_store.insert(key, value);
 
-    RedisValue::SimpleString(Bytes::from_static(b"OK"))
+    let res = RedisValue::SimpleString(Bytes::from_static(b"OK"));
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub async fn get(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let key = get_argument(0, args);
+pub async fn get(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let key = get_argument(0, ctx.args);
 
-    let mut main_store = server.main_store.lock().await;
-    let mut expire_store = server.expire_store.lock().await;
+    let mut main_store = ctx.server.main_store.lock().await;
+    let mut expire_store = ctx.server.expire_store.lock().await;
 
-    match main_store.get(&key) {
+    let res = match main_store.get(&key) {
         Some(val) => {
-            if let Some(timestamp) = expire_store.get(key) {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+            let timestamp = expire_store.get(key).unwrap_or(&u64::MAX);
 
-                if timestamp < &now {
-                    main_store.remove(key);
-                    expire_store.remove(key);
-                    return RedisValue::NullBulkString;
-                }
+            if *timestamp < now() {
+                main_store.remove(key);
+                expire_store.remove(key);
+                RedisValue::NullBulkString
+            } else {
+                val.clone()
             }
-            val.clone()
         }
         None => RedisValue::NullBulkString,
-    }
+    };
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub async fn keys(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let _pattern = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap()).unwrap();
-    let main_store_lock = server.main_store.lock().await;
-    let expire_store_lock = server.expire_store.lock().await;
+pub async fn keys(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let _pattern = str::from_utf8(&get_argument(0, ctx.args).unpack_bulk_str().unwrap()).unwrap();
+    let main_store_lock = ctx.server.main_store.lock().await;
+    let expire_store_lock = ctx.server.expire_store.lock().await;
 
     let mut res = vec![];
 
@@ -128,68 +146,74 @@ pub async fn keys(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
         res.push(key.clone());
     }
 
-    RedisValue::Array(res)
+    let res = RedisValue::Array(res);
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let sub_cmd = str::from_utf8(&get_argument(0, args).unpack_bulk_str().unwrap())
+pub async fn config(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let sub_cmd = str::from_utf8(&get_argument(0, ctx.args).unpack_bulk_str().unwrap())
         .unwrap()
         .to_uppercase();
 
-    match sub_cmd.as_str() {
+    let res = match sub_cmd.as_str() {
         "GET" => {
-            if server.config.is_none() {
-                return RedisValue::SimpleError(Bytes::from_static(b"No config object exists"));
-            }
+            if ctx.server.config.is_none() {
+                RedisValue::SimpleError(Bytes::from_static(b"No config object exists"))
+            } else {
+                let mut resp: Vec<RedisValue> = Vec::new();
+                let config = ctx.server.config.as_ref().unwrap();
 
-            let mut resp: Vec<RedisValue> = Vec::new();
-            let config = server.config.as_ref().unwrap();
+                for arg in ctx.args.iter().skip(1) {
+                    let raw_key = arg.clone().unpack_bulk_str().unwrap();
+                    let key = String::from(str::from_utf8(&raw_key).unwrap());
 
-            for arg in args.iter().skip(1) {
-                let raw_key = arg.clone().unpack_bulk_str().unwrap();
-                let key = String::from(str::from_utf8(&raw_key).unwrap());
-
-                match key.as_str() {
-                    "dir" => resp.extend([
-                        RedisValue::BulkString(Bytes::from(key)),
-                        RedisValue::BulkString(Bytes::from(config.dir.clone())),
-                    ]),
-                    "dbfilename" => resp.extend([
-                        RedisValue::BulkString(Bytes::from(key)),
-                        RedisValue::BulkString(Bytes::from(config.dbfilename.clone())),
-                    ]),
-                    _ => continue,
+                    match key.as_str() {
+                        "dir" => resp.extend([
+                            RedisValue::BulkString(Bytes::from(key)),
+                            RedisValue::BulkString(Bytes::from(config.dir.clone())),
+                        ]),
+                        "dbfilename" => resp.extend([
+                            RedisValue::BulkString(Bytes::from(key)),
+                            RedisValue::BulkString(Bytes::from(config.dbfilename.clone())),
+                        ]),
+                        _ => continue,
+                    }
                 }
+                RedisValue::Array(resp)
             }
-            RedisValue::Array(resp)
         }
         _ => RedisValue::SimpleError(Bytes::from(format!(
             "Invalid sub command for 'CONFIG': '{}'",
             sub_cmd
         ))),
-    }
+    };
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    let info_data = match &server.server_context {
-        ServerContext::Master(ctx) => {
+pub async fn info(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let info_data = match &ctx.server.server_context {
+        ServerContext::Master(master) => {
             let role = format_info("role", &"master");
-            let repl_id = format_info("master_replid", &ctx.master_replid);
-            let repl_offset = format_info("master_repl_offset", &ctx.master_repl_offset);
+            let repl_id = format_info("master_replid", &master.master_replid);
+            let repl_offset = format_info("master_repl_offset", &master.master_repl_offset);
             vec![role, repl_id, repl_offset].join("\r\n")
         }
-        ServerContext::Replica(ctx) => {
+        ServerContext::Replica(replica) => {
             let role = format_info("role", &"slave");
-            let master_replid = format_info("master_replid", &ctx.master_replid);
-            let master_repl_offset = format_info("master_repl_offset", &ctx.master_repl_offset);
-            let slave_repl_offset = format_info("slave_repl_offset", &ctx.slave_repl_offset);
+            let master_replid = format_info("master_replid", &replica.master_replid);
+            let master_repl_offset = format_info("master_repl_offset", &replica.master_repl_offset);
+            let slave_repl_offset = format_info("slave_repl_offset", &replica.slave_repl_offset);
             let master_replid2 = format_info(
                 "master_replid2",
-                &ctx.master_replid2.as_ref().unwrap_or(&"".to_string()),
+                &replica.master_replid2.as_ref().unwrap_or(&"".to_string()),
             );
             let second_repl_offset = format_info(
                 "second_repl_offset",
-                &ctx.second_repl_offset.map_or(-1, |m| m as i32),
+                &replica.second_repl_offset.map_or(-1, |m| m as i32),
             );
 
             vec![
@@ -204,14 +228,38 @@ pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
         }
     };
 
-    RedisValue::BulkString(Bytes::from(info_data))
+    let res = RedisValue::BulkString(Bytes::from(info_data));
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
 }
 
-pub async fn psync(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
-    RedisValue::SimpleString(Bytes::from(format!(
+pub async fn replconf(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let res = RedisValue::SimpleString(Bytes::from_static(b"OK"));
+    let bytes = ctx.handler.write(res).await?;
+
+    Ok(bytes)
+}
+
+pub async fn psync(ctx: &mut CommandContext<'_>) -> Result<usize> {
+    let res = RedisValue::SimpleString(Bytes::from(format!(
         "+FULLRESYNC {} 0\r\n",
-        server.server_context.get_master_replid()
-    )))
+        ctx.server.server_context.get_master_replid()
+    )));
+    ctx.handler.write(res).await?;
+
+    // --- send rdb dump over the wire for fullsync
+    let mut file = File::open("empty.rdb").await?;
+    let mut buf = vec![];
+    file.read_to_end(&mut buf).await?;
+
+    let bytes_len = ctx
+        .handler
+        .write_raw(format!("${}\r\n", buf.len()).as_bytes())
+        .await?;
+    let bytes_content = ctx.handler.write_raw(&buf).await?;
+
+    Ok(bytes_len + bytes_content)
 }
 
 fn format_info<V: Display>(key: &str, value: &V) -> String {
