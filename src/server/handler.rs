@@ -1,4 +1,4 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, ensure, Error, Result};
 use bytes::{Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -7,7 +7,7 @@ use tokio::{
 
 use crate::server::serde::tokenize;
 
-use super::serde::RESPRaw;
+use super::serde::{RESPRaw, RESPToken};
 
 pub struct RedisConnectionHandler {
     stream: TcpStream,
@@ -43,50 +43,34 @@ impl RedisValue {
 
 impl RedisConnectionHandler {
     pub fn new(stream: TcpStream) -> Self {
-        log::info!(
-            "New handler spawned for {}",
-            stream.peer_addr().unwrap().ip()
-        );
-
         Self {
             stream,
             buffer: BytesMut::with_capacity(512),
         }
     }
 
-    pub async fn parse_request(&mut self) -> RESPResult {
+    fn _parse(&mut self, token: Option<RESPToken>) -> RESPResult {
+        token.map_or(Ok(None), |tok| {
+            let req_data = self.buffer.split_to(tok.1);
+            Ok(Some(RedisValue::from_token(tok.0, &req_data.freeze())))
+        })
+    }
+
+    /// Reads from self.buffer and parses the message to a RedisValue
+    pub async fn read_and_parse(&mut self) -> RESPResult {
         let bytes_read = self.stream.read_buf(&mut self.buffer).await?;
         if bytes_read == 0 {
             return Ok(None);
         }
 
-        match tokenize(&self.buffer, 0)? {
-            Some(tok) => {
-                let req_data = self.buffer.split_to(tok.1);
-                let parsed_req = RedisValue::from_token(tok.0, &req_data.freeze());
-
-                // check request was an array of bulk strings
-                match &parsed_req {
-                    RedisValue::Array(arr) => {
-                        for item in arr.iter() {
-                            ensure!(
-                                matches!(item, RedisValue::BulkString(_)),
-                                "Request should be an array of bulk strings"
-                            )
-                        }
-                        Ok(Some(parsed_req))
-                    }
-                    _ => bail!("Request should be an array of bulk strings"),
-                }
-            }
-            None => Ok(None),
-        }
+        let token = tokenize(&self.buffer, 0)?;
+        self._parse(token)
     }
 
-    pub async fn write(&mut self, response: RedisValue) -> Result<()> {
+    pub async fn write(&mut self, response: RedisValue) -> Result<usize> {
         let serialized_data = response.serialize()?;
+        let bytes_written = self.stream.write(serialized_data.as_bytes()).await.unwrap();
 
-        self.stream.write(serialized_data.as_bytes()).await.unwrap();
-        Ok(())
+        Ok(bytes_written)
     }
 }

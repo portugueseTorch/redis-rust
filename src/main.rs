@@ -11,6 +11,7 @@ use server::{
 };
 use tokio::net::TcpStream;
 
+mod replica;
 mod server;
 
 #[derive(Parser, Debug)]
@@ -51,9 +52,25 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
     let mut handler = RedisConnectionHandler::new(stream);
 
     loop {
-        let parsed_data = handler.parse_request().await.unwrap();
+        let parsed_data = handler.read_and_parse().await.unwrap();
+        let parsed_request = match &parsed_data {
+            None => None,
+            Some(RedisValue::Array(arr)) => {
+                for item in arr.iter() {
+                    if !matches!(item, RedisValue::BulkString(_)) {
+                        log::error!("Invalid request format, closing connection...");
+                        return;
+                    }
+                }
+                parsed_data
+            }
+            _ => {
+                log::error!("Invalid request format. closing connection...");
+                return;
+            }
+        };
 
-        let response = match parsed_data {
+        let response = match parsed_request {
             Some(value) => {
                 let (cmd, args) = value.get_cmd_and_args();
                 let cmd_as_str = str::from_utf8(&cmd).unwrap();
@@ -65,6 +82,7 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
                     "SET" => set(&args, &redis_server).await,
                     "GET" => get(&args, &redis_server).await,
                     "KEYS" => keys(&args, &redis_server).await,
+                    "REPLCONF" => RedisValue::SimpleString(Bytes::from_static(b"OK")),
                     "CONFIG" => config(&args, &redis_server),
                     _ => RedisValue::SimpleError(Bytes::from(format!(
                         "Invalid command: '{}'",
@@ -73,11 +91,12 @@ async fn handle_connection(stream: TcpStream, redis_server: Arc<RedisServer>) {
                 }
             }
             None => {
-                log::info!("Closing connection...");
                 break;
             }
         };
 
-        handler.write(response).await.unwrap()
+        handler.write(response).await.unwrap();
     }
+
+    log::info!("Closing connection...");
 }

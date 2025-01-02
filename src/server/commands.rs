@@ -170,7 +170,7 @@ pub fn config(args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
 
 pub fn info(_args: &Vec<RedisValue>, server: &RedisServer) -> RedisValue {
     let role = server
-        .master_listener
+        .replica_context
         .as_ref()
         .map_or("master", |_| "slave");
 

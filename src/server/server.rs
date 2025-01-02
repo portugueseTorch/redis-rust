@@ -9,13 +9,9 @@ use std::{
 
 use anyhow::Result;
 use bytes::Bytes;
-use tokio::{
-    io::AsyncWriteExt,
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::{net::TcpListener, sync::Mutex};
 
-use crate::Args;
+use crate::{replica::RedisReplicaContext, Args};
 
 use super::handler::RedisValue;
 
@@ -41,8 +37,8 @@ pub struct RedisServer {
     pub expire_store: RedisExpireStore,
     /// listener for the client connection
     pub listener: TcpListener,
-    /// listener for the master connection - is some only for replicas
-    pub master_listener: Option<i32>,
+    /// replica context, only some if server instance is a replica
+    pub replica_context: Option<RedisReplicaContext>,
     /// master replication ID
     pub replication_id: String,
     /// offset into the circluar replication buffer
@@ -61,16 +57,14 @@ impl RedisServer {
             .unwrap();
 
         // --- start connection with master, if replica
-        let master_listener: Result<Option<i32>> = if let Some(master_addr) = replicaof {
+        let replica_context = if let Some(master_addr) = replicaof {
             let master_addr = master_addr.replace(" ", ":");
-            let mut socket = TcpStream::connect(master_addr).await?;
-            let _ = socket.write(b"*1\r\n$4\r\nPING\r\n").await?;
+            let ctx = RedisReplicaContext::connect(port, master_addr).await?;
 
-            Ok(Some(42))
+            Some(ctx)
         } else {
-            Ok(None)
+            None
         };
-        let master_listener = master_listener?;
 
         // --- init stores or load state from rdb file
         let (main_store, expire_store, config): RedisServerAux = match (dir, dbfilename) {
@@ -84,7 +78,7 @@ impl RedisServer {
 
         log::info!(
             "Redis {}server running on 127.0.0.1:{}",
-            master_listener.as_ref().map_or("", |_| "replica "),
+            replica_context.as_ref().map_or("", |_| "replica "),
             port
         );
 
@@ -93,8 +87,7 @@ impl RedisServer {
             expire_store,
             config,
             listener,
-            master_listener,
-            //
+            replica_context,
             replication_id: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
             replication_offset: 0,
         }))
