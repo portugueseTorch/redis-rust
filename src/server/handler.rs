@@ -66,7 +66,7 @@ impl RedisConnectionHandler {
             .await
             .expect("Failure reading from stream");
         if bytes_read == 0 {
-            bail!("Malformed PSYNC request");
+            return Ok(vec![]);
         }
 
         // --- ensure correct format
