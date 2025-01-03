@@ -65,7 +65,15 @@ impl RedisReplicaContext {
             RedisValue::BulkString(Bytes::from_static(b"-1")),
         ]);
         handler.write(psync_req).await?;
-        let _ = handler.read_and_parse().await?;
+        handler
+            .read_and_parse()
+            .await
+            .expect("Failure reading result from initial PSYNC");
+        let file_data = handler
+            .read_rdb_file()
+            .await
+            .expect("Failure reading RDB file");
+        log::info!("File data: {:?}", file_data);
 
         Ok(Self {
             master_replid: gen_uuid(),

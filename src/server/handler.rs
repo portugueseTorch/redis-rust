@@ -1,11 +1,13 @@
-use anyhow::Result;
+use core::str;
+
+use anyhow::{bail, ensure, Result};
 use bytes::{Bytes, BytesMut};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 
-use crate::server::serde::tokenize;
+use crate::server::serde::{get_next_word, tokenize};
 
 use super::serde::{RESPRaw, RESPToken};
 
@@ -56,14 +58,54 @@ impl RedisConnectionHandler {
         })
     }
 
+    pub async fn read_rdb_file(&mut self) -> Result<Vec<u8>> {
+        // --- read stream data into the buffer
+        let bytes_read = self
+            .stream
+            .read_buf(&mut self.buffer)
+            .await
+            .expect("Failure reading from stream");
+        if bytes_read == 0 {
+            bail!("Malformed PSYNC request");
+        }
+
+        // --- ensure correct format
+        ensure!(self.buffer[0] == b'$', "Invalid format for FULLSYNC data");
+
+        // --- parse file size
+        let (tok, file_offset) = get_next_word(&self.buffer, 1).unwrap();
+        let raw_file_size = tok.as_slice(&self.buffer);
+        let file_size: usize = str::from_utf8(raw_file_size)?.parse()?;
+        let _ = self.buffer.split_to(file_offset).freeze();
+
+        // --- ensure file size is correct/all data is present
+        ensure!(
+            self.buffer.len() == file_size,
+            "Expected RDB file for FULLSYNC to be {}, but got {}",
+            file_size,
+            self.buffer.len()
+        );
+        let file_data = self.buffer.split_to(file_size - 1).freeze();
+
+        // --- flush out buffer
+        self.buffer.clear();
+
+        Ok(file_data.to_vec())
+    }
+
     /// Reads from self.buffer and parses the message to a RedisValue
     pub async fn read_and_parse(&mut self) -> RESPResult {
-        let bytes_read = self.stream.read_buf(&mut self.buffer).await?;
+        let bytes_read = self
+            .stream
+            .read_buf(&mut self.buffer)
+            .await
+            .expect("Failure reading from stream");
         if bytes_read == 0 {
             return Ok(None);
         }
 
-        let token = tokenize(&self.buffer, 0)?;
+        log::info!("Parsing: {:?}", &self.buffer);
+        let token = tokenize(&self.buffer, 0).expect("Failure parsing request");
         self._parse(token)
     }
 

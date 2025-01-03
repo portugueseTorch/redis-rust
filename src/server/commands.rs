@@ -243,19 +243,28 @@ pub async fn replconf(ctx: &mut CommandContext<'_>) -> Result<usize> {
 
 pub async fn psync(ctx: &mut CommandContext<'_>) -> Result<usize> {
     let res = RedisValue::SimpleString(Bytes::from(format!(
-        "+FULLRESYNC {} 0\r\n",
+        "FULLRESYNC {} 0",
         ctx.server.server_context.get_master_replid()
     )));
-    ctx.handler.write(res).await?;
+    ctx.handler
+        .write(res)
+        .await
+        .expect("Failed to write initial FULLRESYNC");
 
     // --- send rdb dump over the wire for fullsync
     let mut file = File::open("empty.rdb").await?;
     let mut buf = vec![];
-    file.read_to_end(&mut buf).await?;
+    file.read_to_end(&mut buf)
+        .await
+        .expect("Failed to read rdb file");
 
     let file_header = format!("${}\r\n", buf.len());
     let raw_data = &[file_header.as_bytes(), &buf].concat();
-    let bytes = ctx.handler.write_raw(raw_data).await?;
+    let bytes = ctx
+        .handler
+        .write_raw(raw_data)
+        .await
+        .expect("Failed to write file");
 
     Ok(bytes)
 }
